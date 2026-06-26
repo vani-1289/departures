@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+.env.local
+*.log
+.DS_Store
+
+# Wrangler local state — never commit, may contain cached secrets
+worker/.wrangler/
+worker/node_modules/

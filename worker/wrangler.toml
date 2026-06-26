@@ -1,0 +1,7 @@
+name = "departures-proxy"
+main = "index.js"
+compatibility_date = "2025-01-01"
+
+# After deploying, set your real key with:
+#   wrangler secret put ANTHROPIC_API_KEY
+# Never put the actual key value in this file or in any committed file.
