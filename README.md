@@ -4,6 +4,9 @@ An AI productivity companion that frames deadlines like a flight departures boar
 
 Built for the "Last-Minute Life Saver" challenge — moves beyond passive reminders into active prioritization, scheduling, and conversational replanning.
 
+
+
+
 ## Features
 
 - **Today view** — a live timeline of the day's tasks, sized and positioned by actual time, with a moving "now" marker.
