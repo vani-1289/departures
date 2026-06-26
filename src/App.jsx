@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { askTower, buildSystemPrompt } from "./towerClient.js";
+import Auth from "./components/Auth.jsx";
 
 // ============================================================================
 // DESIGN TOKENS
@@ -121,6 +122,27 @@ const CATEGORY_META = {
   bill: { label: "Bill", color: COLORS.teal, icon: "receipt" },
   email: { label: "Email", color: COLORS.textMuted, icon: "mail" },
   habit: { label: "Habit", color: COLORS.teal, icon: "repeat" },
+};
+
+// Helper to load and seed user-specific tasks from localStorage
+const loadTasks = (user) => {
+  if (!user) return [];
+  const key = `departures_tasks_${user.email}`;
+  const stored = localStorage.getItem(key);
+  if (stored) {
+    try {
+      const parsed = JSON.parse(stored);
+      return parsed.map((t) => ({
+        ...t,
+        due: new Date(t.due),
+      }));
+    } catch (e) {
+      console.error("Error parsing stored tasks:", e);
+    }
+  }
+  // Seed default data for new user
+  localStorage.setItem(key, JSON.stringify(INITIAL_TASKS));
+  return INITIAL_TASKS.map(t => ({ ...t }));
 };
 
 // ============================================================================
@@ -272,7 +294,24 @@ const FlapStatus = ({ status }) => {
 // MAIN APP
 // ============================================================================
 export default function App() {
-  const [tasks, setTasks] = useState(INITIAL_TASKS);
+  const [currentUser, setCurrentUser] = useState(() => {
+    const saved = localStorage.getItem("departures_current_user");
+    return saved ? JSON.parse(saved) : null;
+  });
+
+  const [tasks, setTasks] = useState(() => {
+    const savedUser = localStorage.getItem("departures_current_user");
+    if (savedUser) {
+      try {
+        const user = JSON.parse(savedUser);
+        return loadTasks(user);
+      } catch (e) {
+        return [];
+      }
+    }
+    return [];
+  });
+
   const [tab, setTab] = useState("today");
   const [selectedTask, setSelectedTask] = useState(null);
   const [streak, setStreak] = useState(6);
@@ -293,28 +332,60 @@ export default function App() {
     toastTimer.current = setTimeout(() => setToast(null), 3200);
   }, []);
 
+  const handleLogin = (user) => {
+    setCurrentUser(user);
+    localStorage.setItem("departures_current_user", JSON.stringify(user));
+    setTasks(loadTasks(user));
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    localStorage.removeItem("departures_current_user");
+    setTasks([]);
+  };
+
   const markDone = (id) => {
-    setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, status: "done" } : t)));
+    setTasks((prev) => {
+      const updated = prev.map((t) => (t.id === id ? { ...t, status: "done" } : t));
+      if (currentUser) {
+        localStorage.setItem(`departures_tasks_${currentUser.email}`, JSON.stringify(updated));
+      }
+      return updated;
+    });
     setTickFlash(true);
     setTimeout(() => setTickFlash(false), 600);
     showToast("Marked complete — nice work.", "success");
   };
 
   const toggleSubtask = (taskId, subId) => {
-    setTasks((prev) =>
-      prev.map((t) =>
+    setTasks((prev) => {
+      const updated = prev.map((t) =>
         t.id === taskId
           ? { ...t, subtasks: t.subtasks.map((s) => (s.id === subId ? { ...s, done: !s.done } : s)) }
           : t
-      )
-    );
+      );
+      if (currentUser) {
+        localStorage.setItem(`departures_tasks_${currentUser.email}`, JSON.stringify(updated));
+      }
+      return updated;
+    });
   };
 
   const addTask = (newTask) => {
-    setTasks((prev) => [...prev, { ...newTask, id: "t" + Date.now(), status: "pending", subtasks: [] }]);
+    setTasks((prev) => {
+      const updated = [...prev, { ...newTask, id: "t" + Date.now(), status: "pending", subtasks: [] }];
+      if (currentUser) {
+        localStorage.setItem(`departures_tasks_${currentUser.email}`, JSON.stringify(updated));
+      }
+      return updated;
+    });
     setShowAddTask(false);
     showToast("Added — slotted into today's priority order.", "info");
   };
+
+  if (!currentUser) {
+    return <Auth onLogin={handleLogin} />;
+  }
 
   return (
     <div
@@ -346,7 +417,7 @@ export default function App() {
         }
       `}</style>
 
-      <TopBar tab={tab} setTab={setTab} streak={streak} />
+      <TopBar tab={tab} setTab={setTab} streak={streak} currentUser={currentUser} onLogout={handleLogout} />
 
       <div
         className="main-grid"
@@ -408,12 +479,23 @@ export default function App() {
 // ============================================================================
 // TOP BAR
 // ============================================================================
-function TopBar({ tab, setTab, streak }) {
+function TopBar({ tab, setTab, streak, currentUser, onLogout }) {
+  const [dropdownOpen, setDropdownOpen] = useState(false);
   const tabs = [
     { id: "today", label: "Today" },
     { id: "priorities", label: "Priorities" },
     { id: "habits", label: "Habits" },
   ];
+
+  const initials = useMemo(() => {
+    if (!currentUser) return "P";
+    const parts = currentUser.name.trim().split(/\s+/);
+    if (parts.length >= 2) {
+      return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    }
+    return currentUser.name.substring(0, 2).toUpperCase();
+  }, [currentUser]);
+
   return (
     <div
       style={{
@@ -432,6 +514,7 @@ function TopBar({ tab, setTab, streak }) {
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
+          position: "relative",
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -460,27 +543,127 @@ function TopBar({ tab, setTab, streak }) {
           </span>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 18, position: "relative" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, color: COLORS.textMuted, fontSize: 13 }}>
             <Icon name="trendingUp" size={14} color={COLORS.teal} />
             <span>{streak} day streak</span>
           </div>
-          <div
+          <button
+            onClick={() => setDropdownOpen(!dropdownOpen)}
             style={{
-              width: 30,
-              height: 30,
+              width: 32,
+              height: 32,
               borderRadius: "50%",
               background: COLORS.violet,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              fontSize: 12,
+              fontSize: 12.5,
               fontWeight: 600,
               color: COLORS.base,
+              border: "none",
+              cursor: "pointer",
+              transition: "transform 0.15s, box-shadow 0.15s",
+              boxShadow: dropdownOpen ? `0 0 0 3px ${COLORS.violet}44` : "none",
+            }}
+            onMouseEnter={(e) => {
+              e.target.style.transform = "scale(1.05)";
+            }}
+            onMouseLeave={(e) => {
+              e.target.style.transform = "scale(1)";
             }}
           >
-            JM
-          </div>
+            {initials}
+          </button>
+
+          {dropdownOpen && (
+            <>
+              <div
+                onClick={() => setDropdownOpen(false)}
+                style={{
+                  position: "fixed",
+                  inset: 0,
+                  zIndex: 40,
+                }}
+              />
+              <div
+                className="slide-up"
+                style={{
+                  position: "absolute",
+                  top: 40,
+                  right: 0,
+                  width: 240,
+                  background: COLORS.surfaceRaised,
+                  border: `1px solid ${COLORS.borderLight}`,
+                  borderRadius: 10,
+                  padding: 16,
+                  boxShadow: "0 10px 25px rgba(0, 0, 0, 0.4)",
+                  zIndex: 50,
+                  textAlign: "left",
+                }}
+              >
+                <div style={{ borderBottom: `1px dashed ${COLORS.border}`, paddingBottom: 12, marginBottom: 12 }}>
+                  <div
+                    style={{
+                      fontFamily: FONT_DISPLAY,
+                      fontWeight: 600,
+                      fontSize: 15,
+                      color: COLORS.text,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {currentUser?.name || "Passenger"}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: COLORS.textMuted,
+                      marginTop: 2,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {currentUser?.email || ""}
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => {
+                    setDropdownOpen(false);
+                    onLogout();
+                  }}
+                  style={{
+                    width: "100%",
+                    background: "transparent",
+                    border: `1px solid ${COLORS.red}55`,
+                    color: COLORS.red,
+                    borderRadius: 6,
+                    padding: "8px 12px",
+                    fontSize: 13,
+                    fontWeight: 500,
+                    cursor: "pointer",
+                    transition: "background 0.2s, color 0.2s",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 6,
+                  }}
+                  onMouseEnter={(e) => {
+                    e.target.style.background = COLORS.redDim;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.target.style.background = "transparent";
+                  }}
+                >
+                  <Icon name="x" size={13} color={COLORS.red} />
+                  Sign Out
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
